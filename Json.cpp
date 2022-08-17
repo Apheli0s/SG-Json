@@ -2,11 +2,12 @@
 
 namespace sg
 {
-    inline bool isdigit(char c) { return c >= '0' && c <= '9' }
+    inline bool isdigit(char c) { return c >= '0' && c <= '9'; }
+    inline bool ishexdigit(char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z'); }
 
-    inline void skipblank(string &s, int i)
+    inline void skipwhitespace(const string &json_text, int i)
     {
-        while (s[i] == ' ')
+        while (json_text[i] == ' ')
             ++i;
     }
 
@@ -15,7 +16,7 @@ namespace sg
         int offset = 0;
         for (; context[offset]; ++offset)
         {
-            if (json_text[i + offset] != context)
+            if (json_text[i + offset] != context[offset])
             {
                 cerr << "error:parsebool():invalid value." << endl;
                 return;
@@ -28,7 +29,7 @@ namespace sg
         int offset = 0;
         for (; context[offset]; ++offset)
         {
-            if (json_text[i + offset] != context)
+            if (json_text[i + offset] != context[offset])
             {
                 cerr << "error:parsenull():invalid value." << endl;
                 return;
@@ -74,9 +75,10 @@ namespace sg
             while (isdigit(json_text[i]))
                 ++i;
         }
-        members[key] = stod(string(begin(json_text) + start, begin(json_text) + i - 1));
+        string tmp(json_text, start, i - start);
+        members.emplace(make_pair(key, json_value(stod(tmp)))); // note:stod()只接受左值和左值引用,不可stod(string());后来看cppreference发现貌似只需要给stod()第二个参数起始点，就可以让它自己解析。
     }
-    void json::parsestring(const string &key, const string &json_text, int i);
+    void json::parsestring(const string &key, const string &json_text, int i)
     {
         if (json_text[i] != '"')
         {
@@ -84,7 +86,7 @@ namespace sg
             return;
         }
 
-        int j = i + 1;
+        int j = i + 1, n = json_text.size();
         while (j < n && json_text[j] != '"')
             ++j;
         if (j == n)
@@ -97,26 +99,23 @@ namespace sg
             cerr << "error:Empty key." << endl;
             return;
         }
-        members[key] = move(string(json_text, i + 1, j - i - 1));
+        members.emplace(make_pair(key, json_value(string(json_text, i, j - i))));
     }
-    void parsevector(const string &key, const string &json_text, int i)
+    void json::parsevector(const string &key, const string &json_text, int i)
     {
-        if (json_text[i] != '[')
-        {
-            cerr << "error:Expect left square." << endl;
-            return;
-        }
     }
-    void parseobject(const string &json_text, int i)
+    void json::parseobject(const string &key, const string &json_text, int i)
     {
         if (json_text[i] != '{')
         {
             cerr << "error:Expect left brace." << endl;
             return;
         }
-        while (i < n && json_text[i] != '}')
+        json subjson;
+        int n = json_text.size();
+        for (; i < n && json_text[i] != '}';)
         {
-            skipblank(key, json_text, i);
+            skipwhitespace(json_text, i);
             if (json_text[i] != '"')
             {
                 cerr << "error:Expect left quotation." << endl;
@@ -139,30 +138,35 @@ namespace sg
             string key(json_text, i + 1, j - i - 1);
             i = j + 1;
 
-            skipblank(json_text, i);
+            skipwhitespace(json_text, i);
             if (i >= n || json_text[i] != ':')
             {
                 cerr << "error:Expect colon." << endl;
                 return;
             }
 
-            skipblank(json_text, i);
-            parsevalue(key, json_text, i);
-            skipblank(json_text, i);
+            skipwhitespace(json_text, i);
+            if (key.empty()) //根据key是否为空判断，对象是否是其他对象的子对象。
+                parsevalue(key, json_text, i);
+            else
+                subjson.parsevalue(key, json_text, i);
+            skipwhitespace(json_text, i);
 
             if (i < n - 1 && json_text[i] != ',')
             {
-                "error:Expect comma."
+                cerr << "error:Expect comma." << endl;
             }
             ++i;
         }
 
-        skipblank(json_text, i);
+        skipwhitespace(json_text, i);
         if (i == n || json_text[i] != '}')
         {
             cerr << "error:Expect right brace." << endl;
             return;
         }
+        if (!key.empty())
+            members.emplace(make_pair(key, subjson));
     }
     void json::parsevalue(const string &key, const string &json_text, int i)
     {
@@ -175,7 +179,7 @@ namespace sg
         case 'n':
             parsenull(key, json_text, i, "null");
         default:
-            return parsenum(key, json_text, i);
+            parsenum(key, json_text, i);
         case '"':
             parsestring(key, json_text, i);
         case '{':
@@ -185,15 +189,15 @@ namespace sg
         }
     }
 
-    json::json(string json_text)
+    json::json(const string &json_text, int i = 0)
     {
-        int i = 0, n = json_text.size();
-        skipblank(key, json_text, i);
+        int n = json_text.size();
+        skipwhitespace(json_text, i);
         if (json_text[i] != '{')
         {
             cerr << "error:Expect left brace." << endl;
             return;
         }
-        parseobject(json_text, i);
+        parseobject(string(), json_text, i);
     }
 } // namespace sg
